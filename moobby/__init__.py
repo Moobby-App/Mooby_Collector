@@ -1,0 +1,1 @@
+"""Moobby local pipeline."""
