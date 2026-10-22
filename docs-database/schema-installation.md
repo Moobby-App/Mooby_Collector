@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the installation contract for `migrations/0001_collection_processing_archive.sql` and `migrations/0002_runtime_role_and_grants.sql`. It is not authorization to run them against Supabase. Both migrations have only been executed in disposable local PostgreSQL clusters; no remote migration, role change, reset, or purge occurred. See [final-migration-readiness.md](final-migration-readiness.md) and [stage5-installation-proposal.md](stage5-installation-proposal.md) for the current Stage 4 evidence and approval package.
+This document records the installation contract and actual Stage 5 execution for `migrations/0001_collection_processing_archive.sql` and `migrations/0002_runtime_role_and_grants.sql`. The owner authorized exactly these hashes for the confirmed target; both were applied successfully to PostgreSQL 17.11 in separate transactions, each with its ledger row inserted before commit. No reset, purge, or Supabase-managed object change occurred. See [final-migration-readiness.md](final-migration-readiness.md) for verification and remaining runtime credential actions.
 
 ## Inputs, outputs, and dependencies
 
@@ -14,7 +14,7 @@ The migration operator needs an administrative connection able to create schemas
 
 ## Installation transaction procedure
 
-This is the process verified by the isolated integration harness. Do not use it against a live target before the separate approval gate below.
+This is the process verified by the isolated integration harness and followed during the approved live installation.
 
 1. Confirm the target and verify that a current backup and isolated rehearsal exist.
 2. Read `collection.schema_migrations` if it exists. For a fresh schema, there is no ledger yet and only migration 0001 is eligible.
@@ -23,7 +23,7 @@ This is the process verified by the isolated integration harness. Do not use it 
 5. Before the next version or any retry, fetch the ledger and call `pending_migrations` again. Never execute a file whose version is already recorded. If a recorded checksum differs from the local file, stop and prepare a new numbered migration instead of editing/replaying the old one.
 6. Verify the resulting table/index/constraint definitions, grants, RLS policies, and ledger checksums against the rehearsal manifest.
 
-For a fresh target, version 1 creates the ledger and records itself in the same transaction; version 2 is then applied and recorded in a second transaction. Do not apply the SQL files directly with `psql -f` without the ledger insert, because that would leave an untracked schema. The automated tests perform this procedure with local psycopg connections and exact file hashes.
+For this target, version 1 created the ledger and recorded itself in the same transaction; version 2 was then applied and recorded in a second transaction. Do not apply the SQL files directly with `psql -f` without the ledger insert, because that would leave an untracked schema. The automated tests perform this procedure with local psycopg connections and exact file hashes.
 
 ## Recovery procedure
 
@@ -45,12 +45,17 @@ Payload purge is not installed or enabled by these migrations. The runtime role 
 
 ## Remaining limitations and assumptions
 
+- Live installation and restricted runtime validation are complete for the two approved migrations. The owner-configured runtime connection authenticated as `moobby_runtime`; read-only and transactional smoke checks passed. Preflight passed using the runtime connection.
+- Remote catalog checks confirmed the exact 13 tables, two checksummed ledger rows, source seed, 13 enabled RLS tables, 13 policies, no `anon`/`authenticated` schema/table access, and the restricted runtime role flags. Client TLS was confirmed through libpq; `pg_stat_ssl` described the pooler-to-server side and reported false, so it was not used as the client TLS indicator.
+
 - The project owner supplied target PostgreSQL version **17.11**. Migration syntax, ledger behavior, grants/RLS, constraints, and the synthetic backup/restore tests now pass on local PostgreSQL 17.11. This does not prove Supabase-specific behavior or prove the actual Supabase project backup is recoverable.
 - The pure checksum helper must be invoked by a migration operator before SQL execution. There is no general remote migration runner in this stage. Add a controlled migration runner only after the live deployment procedure and approval boundary are agreed.
-- Supabase Data API exposed-schema settings and provider-specific role behavior are not represented by local PostgreSQL. The Data API is enabled, but exposed schemas are not confirmed; keep all three Moobby schemas out of the exposed-schema list and verify this in the Dashboard before deployment.
+- Supabase Data API exposed-schema settings and provider-specific role behavior are not represented by local PostgreSQL. The owner reported the Dashboard list as exactly `graphql_public`, `public`, excluding the Moobby schemas; this report is owner-confirmed, not independently inspected from a connected Dashboard, and must be reconfirmed immediately before deployment.
 - The actual logical dump restored all 31 included relations with exact row counts, but excludes eight inventoried relations, role/membership state, provider configuration, Data API settings, and Storage object bytes. It is not whole-project disaster recovery and is not a substitute for a fresh backup/rehearsal immediately before installation.
 - No tests enable purge, delete rows, or alter remote objects.
 
-## Live migration proposal — separate approval required
+## Live installation status and remaining owner action
 
-Proposed order after remaining prerequisites are met: owner confirms the target; fresh R0 inventory confirms no object conflicts; final schema decisions are accepted; R1 backup/checksums and R3 restore/migration rehearsal pass on PostgreSQL 17.11; role collision, memberships, RLS, and Data API exposure are reviewed; then an operator prepares exact migration hashes, target and recovery steps for explicit owner approval. Only after that approval may a separate request authorize applying migrations. This document does not authorize that action.
+The approved installation is complete for migrations 0001 and 0002. The target, byte-level checksums, two transaction commits, ledger, 13 tables, source seed, runtime flags/grants, RLS/policies, and absence of `anon`/`authenticated` privileges were verified after installation. No migration SQL was changed. The pre-install backup limitations and application-scoped recovery objective above still apply.
+
+The owner operated the interactive `psql \password moobby_runtime` procedure and configured the restricted runtime Session Pooler URI in Git-ignored `.env` with mode `0600`. The live login, preflight, grants, denied operations, and rollback-only fixture test passed as documented in [runtime-credentials-and-smoke-test.md](runtime-credentials-and-smoke-test.md). No further remote SQL is needed for these migrations. Stage 6 has not been started.

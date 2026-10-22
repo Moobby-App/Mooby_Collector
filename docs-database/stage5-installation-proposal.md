@@ -1,10 +1,10 @@
-# Stage 5 live migration proposal — approval required
+# Stage 5 live migration installation record
 
-**Status: proposal only. No live SQL has been executed.** This document defines the exact first installation for owner review. Approval of this document would not authorize reset, purge, role adoption, or changes to Supabase-managed schemas.
+**Status: executed within the owner's exact authorization on 2026-10-22.** Only the two listed migrations were applied to the confirmed target. No reset, purge, role adoption, or changes to Supabase-managed schemas occurred. See [final-migration-readiness.md](final-migration-readiness.md) for actual results and the remaining runtime credential check.
 
 ## 1. Target confirmation
 
-Last read-only inspection: 2026-10-22. Target hint: `host=aws-0-ap-northeast-1.pooler.supabase.com; project_ref=vgy…ug`; server PostgreSQL 17.11; `current_user=postgres`; transaction confirmed `read_only=on`. The connection was TLS-required with a five-second timeout. The target hint is intentionally credential-free. Immediately before an approved run, the operator must independently confirm the Dashboard project ref and verify a newly computed masked hint matches this one. Abort on mismatch, inability to confirm, server version change, or failed read-only preflight.
+Last read-only pre-install inspection: 2026-10-22. Target hint: `host=aws-0-ap-northeast-1.pooler.supabase.com; project_ref=vgy…ug`; server PostgreSQL 17.11; `current_user=postgres`; transaction confirmed `read_only=on`. Before execution the masked hint was checked again and matched. The migration connections required TLS with a five-second timeout; client TLS was verified with libpq `ssl_in_use=True`.
 
 ## 2. Exact affected objects
 
@@ -33,7 +33,11 @@ Apply v1 in a transaction and insert its ledger row before commit. Read the ledg
 
 Version 2 revokes `PUBLIC`, `anon`, and `authenticated` privileges only on the three newly created schemas and their tables. It grants schema USAGE to `moobby_runtime`, with explicit SELECT/INSERT and column-limited UPDATE on the tables needed by the pipeline. The migration enables RLS on all 13 tables and creates policies for the runtime role. It grants no schema/table DELETE, DDL, role management, database creation, replication, or RLS bypass. `sources` and the migration ledger are read-only for runtime. `moobby_runtime` has no memberships at creation and NOINHERIT.
 
-The project Data API is enabled. Its exposed-schema list has not been verified. The owner must confirm through Dashboard → Project Settings → API → Exposed schemas that `collection`, `processing`, and `archive` are absent. SQL grants and RLS do not substitute for this check. If an application schema is exposed, stop; any setting change is a separate reviewed remote change and is not included here.
+The project Data API is enabled. On 2026-10-22, the owner reported the Dashboard → Project Settings → API → Exposed schemas list as exactly `graphql_public`, `public`; this excludes `collection`, `processing`, and `archive`. This is owner-confirmed, not independently inspected through a connected Dashboard. Reconfirm the list immediately before execution. SQL grants and RLS do not substitute for this check. If an application schema is exposed, stop; any setting change is a separate reviewed remote change and is not included here.
+
+### Runtime credential setup (owner operated)
+
+The migration creates `moobby_runtime` without a password. After the migration is approved and the role exists, the owner should set its password from an interactive `psql` session using a TLS-protected administrative service definition/passfile or an approved secret manager. Run `\password moobby_runtime` at the `psql` prompt; enter the password only at the hidden prompts. Do not put it in SQL source, shell arguments/history, logs, or chat. The owner then obtains the runtime Session Pooler URI from the confirmed project's Dashboard Connect settings, using the new role, and puts that URI in the local Git-ignored `.env` as `DATABASE_URL`. Keep `.env` mode `0600`, verify `git check-ignore .env`, and never print the URI. Keep administrative credentials separate from the application's `DATABASE_URL`. The owner retains and stores the password; the agent will not request or receive it.
 
 ## 5. Preconditions and execution checklist
 
@@ -65,6 +69,8 @@ Use read-only checks unless a test write is separately approved and isolated fro
 
 The isolated PostgreSQL 17.11/18.4 integration tests establish behavior in those local test clusters, not live Supabase role inheritance or Data API behavior. Avoid live row mutations for permission tests unless the owner separately approves a safe, isolated fixture protocol.
 
+**Export enforcement boundary:** the approved SQL files constrain allowed status values, required lifecycle timestamps, and duplicate batch/job membership. They do not enforce forward-only transitions, immutable membership after preparation, matching record counts/checksums, or purge dependency checks. The accepted policy is that these checks are enforced by application transactions in a later implementation; purge remains disabled and has no DELETE grant. If database-level enforcement is required at installation time, do not apply these hashes: design, rehearse, and review a new numbered migration first.
+
 ## 7. Recovery objective and procedure
 
 **Scope:** protect the pre-installation application state only. The latest inventory showed no Moobby schemas/tables or runtime role, so there are no existing Moobby rows to lose. Preserve every pre-existing platform/application object unchanged. Each migration and ledger insert is atomic as one transaction; a failed transaction must roll back fully. No numeric RTO is asserted.
@@ -73,8 +79,10 @@ If a transaction fails, stop and retain redacted diagnostics. Do not run the nex
 
 The verified CLI files are at `/Users/nfahrisalim/Documents/Moobby-backups/moobby-supabase-backup-20261021T234448Z` on the local FileVault-encrypted APFS Data volume, with directory mode 0700 and files mode 0600. Their SHA-256 values match the temporary originals. The original remains in `/private/tmp`. This is a local partial logical dump, not offsite storage or whole-project disaster recovery. It omits eight catalog relations (247 rows), the complete role/membership graph, provider settings, Data API configuration, and Storage object bytes. Do not replay its role file or restore its managed objects as part of this proposal. The application-scoped migration recovery objective does not claim those omissions are recovered.
 
-## 8. Owner decisions and approval
+## 8. Owner decisions and approval record
 
-Before installation, the owner must approve: the target hint/project ref; both exact checksums; schema and role names; the seed; run method/mode/status semantics; discovered-author design; payload retention through verified export; job and attempt uniqueness behavior; receipt retry comparison; export state enforcement boundary; the partial backup/recovery scope; and the no-purge/no-managed-object-change boundary. The owner must also confirm the exposed-schema list and runtime password procedure.
+The owner has accepted the schema/grant proposals listed in the readiness report, including discovered author separation, profile/search methods, live/historical modes, `partial` status, payload retention through verified export, job/attempt uniqueness, receipt retry comparison, the restricted role/RLS design, and no purge. The owner also supplied the exposed-schema list recorded above and confirmed they will set/store the runtime password and keep the runtime URI in local `.env`.
 
-**Approval request:** review this complete proposal and explicitly authorize a separate Stage 5 live-installation request specifying the confirmed target and approving both hashes. Until that approval is given, no live SQL or remote write is permitted.
+The owner confirmed that export lifecycle checks will be enforced by later application transactions and approved exact installation of migrations 0001 and 0002 at the named target. Both transactions committed with their ledger rows. The partial backup/recovery scope and no-purge/no-managed-object-change boundary remain as documented. Runtime credential setup is pending and owner-operated.
+
+**Execution result:** authorization was received in the conversation on 2026-10-22. Both migrations and subsequent restricted-runtime verification passed. No further remote schema change is authorized by this record. The runtime password and URI remain owner-managed and are not recorded here.

@@ -1,8 +1,12 @@
-# Database inventory and schema draft review
+# Database inventory and schema review record
+
+## Current status
+
+The schema in migrations 0001 and 0002 was installed on the confirmed Supabase target on 2026-10-22 after explicit owner authorization of the exact two file hashes. Post-install verification is recorded in [final-migration-readiness.md](final-migration-readiness.md). The owner still needs to configure the runtime password/URI and validate a runtime login before Stage 5 is fully complete.
 
 ## Purpose
 
-This document accompanies two review artifacts: a read-only R0 inventory script and a numbered DDL proposal for the Collection, Processing, and Archive groups. Both migrations are drafts only and have not been applied. A read-only R0 inventory was run on 22 October 2026; results and limitations are recorded in [inventory-results.md](inventory-results.md).
+This document explains the read-only R0 inventory and the numbered DDL for the Collection, Processing, and Archive groups. The migrations are no longer drafts: the owner-authorized installation and read-only post-checks are recorded in [inventory-results.md](inventory-results.md). Historical inventory counts remain snapshots from before installation.
 
 ## Inputs, outputs, and dependencies
 
@@ -14,7 +18,7 @@ The script depends on the project’s pinned `psycopg[binary]` dependency and th
 
 The only inventory setting is `DATABASE_URL`, supplied through the existing project-root `.env` or process environment; no secret values belong in this document. A missing setting, missing `psycopg`, connection/query error, insufficient catalog privileges, or server that does not confirm a read-only transaction produces a redacted error and non-zero exit. A connection failure does not imply anything about the real database contents.
 
-The migrations are plain PostgreSQL SQL drafts. The read-only R0 inventory confirmed the target has `anon` and `authenticated` roles; it also confirmed both draft migrations create only new Moobby schemas/role names at the time of inspection. Both drafts were executed in local PostgreSQL rehearsal only. Neither migration is an application tool, and neither has been applied remotely.
+The migration files are plain PostgreSQL SQL. The read-only pre-install R0 inventory confirmed the target had `anon` and `authenticated` roles and no Moobby schema/role collisions. The files passed local PostgreSQL rehearsal and were later installed remotely under the exact owner authorization documented in the Stage 5 installation record. Neither migration is an application tool.
 
 ## Proposed ERD
 
@@ -174,7 +178,7 @@ All represented timestamps use `timestamptz`. The publication timestamp’s orig
 
 `moobby_runtime` is a LOGIN role with no password clause in the file and with superuser, database creation, role creation, replication, and RLS bypass disabled. Set its password out of band after inspecting the target and confirming the role does not already exist. The role receives schema usage and explicit table grants; update privileges are column-limited where practical. `sources`, migration tracking, raw capture records, LLM attempts, and fingerprints are read/insert-only for the runtime where updates are unnecessary.
 
-RLS policies allow the single runtime role to access its pipeline tables. They do not grant access to `anon` or `authenticated`; schema/table revokes block those roles at the SQL privilege layer as well. The SQL comment requires the owner to inspect Supabase's exposed-schema/Data API configuration. Whether the target project exposes any of these schemas through its Data API is **UNVERIFIED**; RLS/grants in this draft are not evidence of that project setting.
+RLS policies allow the single runtime role to access its pipeline tables. They do not grant access to `anon` or `authenticated`; schema/table revokes block those roles at the SQL privilege layer as well. The owner reported the Dashboard exposed-schema list as exactly `graphql_public`, `public`, excluding all three Moobby schemas. This is owner-confirmed but was not independently read from a connected Dashboard. RLS/grants in this draft do not configure that project setting, so reconfirm it before execution.
 
 This draft does not include sequence grants because UUID defaults use PostgreSQL `gen_random_uuid()` and no sequence-backed columns are proposed. Future tables need explicit grants and RLS policies; no default privileges are installed.
 
@@ -198,7 +202,7 @@ The following choices use explicit guidance in SPEC §4, §5, §7.2, §9, §10.3
 | Export lifecycle | Batch and item statuses allow §12.1 values and state-required timestamps. | Draft checks required timestamps but does not enforce monotonic transitions, frozen membership, exact manifest checksum/count, or purge eligibility. Those require app transactions or reviewed triggers; choose after implementation design. |
 | Purge dependencies | Retain all rows and replace payload values with NULL after verified export; no DELETE is granted. Fingerprints/receipts remain. | Preserves identity and audit refs without unsafe cascading deletes. Transit/review references do not exist yet. Define dependency query/authorization, local copy retention, and a separate purge role/procedure before implementing purge. |
 | Runtime role/grants | `moobby_runtime` has explicit table and column grants, RLS policies, no DDL/role-management/DELETE, and no password in SQL. | AC-03 and §7.2. Inventory shows Supabase roles including `anon`/`authenticated`, but no `moobby_runtime`. Before applying, verify role collision/membership and inherited rights. Set password out of band. |
-| Data API exposure | Draft revokes SQL schema/table access from `PUBLIC`, `anon`, and `authenticated`, but does not configure API exposed schemas. | The current project's Data API exposed-schema setting cannot be established from this SQL inventory and remains **UNVERIFIED**. Owner must confirm `collection`, `processing`, `archive` are not exposed. |
+| Data API exposure | Draft revokes SQL schema/table access from `PUBLIC`, `anon`, and `authenticated`, but does not configure API exposed schemas. | Owner reported the exact Dashboard list as `graphql_public`, `public`, which excludes the Moobby schemas. This is not independently verified from a Dashboard session; reconfirm before execution. |
 | Migration tracking | `collection.schema_migrations` stores version, name, required SHA-256, and application time; the checksum is computed from the exact migration file by the migration operator. | Supports later version preflight. The inventory found no `supabase_migrations` schema; Supabase-managed migration-like tables exist but were not read. A tested helper rejects unknown versions, name drift, missing checksums, and checksum drift before a caller executes SQL. The migration SQL drafts themselves are not idempotent; the operator must check history, apply a pending file, and record its checksum in the same transaction. |
 | Human review labels | No review table is added in this stage; export is expected to carry both `llm_label` and optional `review_label` in JSONL when the later review model exists. | §2/§12 require review labels not to overwrite original LLM labels. The relevant review/candidate entities are deferred by this stage’s Collection/Processing/Archive scope. A later schema change must model review history and connect it to the exported record. |
 
@@ -206,8 +210,8 @@ The following choices use explicit guidance in SPEC §4, §5, §7.2, §9, §10.3
 
 - The inventory on 22 October 2026 listed the managed schemas and objects recorded in [inventory-results.md](inventory-results.md); approximate row estimates are not exact counts. No Moobby schemas or public application tables were listed at that inspection.
 - The draft assumes PostgreSQL support for partial indexes, RLS, `gen_random_uuid()`, and the Supabase `anon`/`authenticated` roles. The earlier R0 inventory confirmed those roles and `extensions.gen_random_uuid()`. Both draft migrations and the synthetic backup/restore harness passed on local PostgreSQL 17.11 and 18.4.
-- Both draft migrations were executed only in disposable local PostgreSQL rehearsals. No live schema was changed. The refreshed R0 inventory remains a snapshot; repeat it immediately before any separately approved live migration because schema and role availability may change.
-- Supabase Data API exposure settings are not visible through this inventory and remain **UNVERIFIED**.
+- Both migrations passed disposable local PostgreSQL rehearsals before the separately approved live installation. The R0 counts in this section remain a pre-install snapshot; current objects and post-install checks are recorded in [inventory-results.md](inventory-results.md).
+- Supabase Data API exposure settings are not visible through PostgreSQL inventory. The owner reported the current list as `graphql_public`, `public`; reconfirm it immediately before execution.
 - Current payload redaction retains database rows. Purge eligibility and blocked references are not enforced by this draft; do not run a purge based on status alone.
 - Cross-row/application behavior remains outside ordinary CHECK constraints: receipt digest comparison, retry reuse after purge, final job success consistency, forward export transitions, checksum verification, membership freeze, review history, and purge dependency checks.
 
