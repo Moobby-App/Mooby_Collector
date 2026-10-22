@@ -104,5 +104,5 @@ ALTER TABLE archive.export_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY runtime_all ON archive.export_items
     FOR ALL TO moobby_runtime USING (true) WITH CHECK (true);
 
-INSERT INTO collection.schema_migrations (version, name)
-VALUES (2, '0002_runtime_role_and_grants');
+-- The migration operator records this version and the SHA-256 of this exact file
+-- in the same transaction as this DDL. See docs-database/schema-installation.md.

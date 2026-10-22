@@ -9,9 +9,7 @@ CREATE SCHEMA archive;
 CREATE TABLE collection.schema_migrations (
     version integer PRIMARY KEY CHECK (version > 0),
     name text NOT NULL UNIQUE,
-    checksum_sha256 text CHECK (
-        checksum_sha256 IS NULL OR checksum_sha256 ~ '^[0-9a-f]{64}$'
-    ),
+    checksum_sha256 text NOT NULL CHECK (checksum_sha256 ~ '^[0-9a-f]{64}$'),
     applied_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -42,8 +40,9 @@ CREATE TABLE collection.collection_runs (
     run_id uuid PRIMARY KEY,
     collector_version text NOT NULL,
     method text NOT NULL CHECK (method IN ('profile', 'search')),
+    collection_mode text NOT NULL CHECK (collection_mode IN ('live', 'historical')),
     profile_source_id uuid REFERENCES collection.sources(source_id) ON DELETE RESTRICT,
-    status text NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'auth_required')),
+    status text NOT NULL CHECK (status IN ('running', 'succeeded', 'partial', 'failed', 'auth_required')),
     coverage jsonb NOT NULL DEFAULT '{}'::jsonb,
     error_count integer NOT NULL DEFAULT 0 CHECK (error_count >= 0),
     skip_count integer NOT NULL DEFAULT 0 CHECK (skip_count >= 0),
@@ -75,7 +74,7 @@ CREATE TABLE collection.raw_snapshots (
     snapshot_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     content_id uuid NOT NULL REFERENCES collection.raw_contents(content_id) ON DELETE RESTRICT,
     capture_hash text NOT NULL CHECK (capture_hash ~ '^[0-9a-f]{64}$'),
-    raw_text text NOT NULL,
+    raw_text text,
     published_at_original text,
     published_at timestamptz,
     fetched_at timestamptz NOT NULL DEFAULT now(),
@@ -89,14 +88,22 @@ CREATE TABLE collection.raw_snapshots (
         media_quality IN ('available', 'unavailable', 'not_checked', 'unknown')
     ),
     media_metadata jsonb NOT NULL DEFAULT '[]'::jsonb,
+    payload_purged_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT raw_snapshots_content_capture_unique UNIQUE (content_id, capture_hash),
     CONSTRAINT raw_snapshots_id_content_unique UNIQUE (snapshot_id, content_id),
     CONSTRAINT raw_snapshots_timestamp_quality CHECK (
         (time_quality = 'valid' AND published_at IS NOT NULL)
-        OR (time_quality <> 'valid' AND (published_at IS NULL OR time_quality = 'time_mismatch'))
+        OR (time_quality = 'time_mismatch' AND published_at IS NOT NULL)
+        OR (time_quality IN ('missing', 'invalid', 'unknown') AND published_at IS NULL)
+    ),
+    CONSTRAINT raw_snapshots_payload_purge_consistent CHECK (
+        (payload_purged_at IS NULL AND raw_text IS NOT NULL)
+        OR (payload_purged_at IS NOT NULL AND raw_text IS NULL AND media_metadata = '[]'::jsonb)
     )
 );
+COMMENT ON COLUMN collection.raw_snapshots.payload_purged_at IS
+    'Set by a separately authorized retention operation only after verified export and reference checks; row/hash metadata remains for deduplication.';
 
 CREATE TABLE collection.content_observations (
     observation_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -144,7 +151,7 @@ CREATE TABLE processing.llm_attempts (
     model text NOT NULL,
     prompt_version text NOT NULL,
     contract_version text NOT NULL,
-    request_csv text NOT NULL,
+    request_csv text,
     response_csv text,
     http_status smallint CHECK (http_status BETWEEN 100 AND 599),
     finish_reason text,
@@ -157,10 +164,19 @@ CREATE TABLE processing.llm_attempts (
         validation_result IN ('not_run', 'pending', 'valid', 'invalid', 'error')
     ),
     is_success boolean NOT NULL DEFAULT false,
+    payload_purged_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT llm_attempts_job_attempt_unique UNIQUE (job_id, attempt_number),
-    CONSTRAINT llm_attempts_success_is_valid CHECK (NOT is_success OR validation_result = 'valid')
+    CONSTRAINT llm_attempts_success_is_valid CHECK (NOT is_success OR validation_result = 'valid'),
+    CONSTRAINT llm_attempts_payload_purge_consistent CHECK (
+        payload_purged_at IS NULL OR (request_csv IS NULL AND response_csv IS NULL)
+    ),
+    CONSTRAINT llm_attempts_request_present_before_purge CHECK (
+        payload_purged_at IS NOT NULL OR request_csv IS NOT NULL
+    )
 );
+COMMENT ON COLUMN processing.llm_attempts.payload_purged_at IS
+    'Set only by a separately authorized retention operation after verified export; attempt metadata remains while request/response CSV payloads are nulled.';
 
 -- At most one accepted successful result per processing job.
 CREATE UNIQUE INDEX llm_attempts_one_success_per_job
@@ -206,7 +222,13 @@ CREATE TABLE archive.export_batches (
     verified_at timestamptz,
     purge_pending_at timestamptz,
     purged_at timestamptz,
-    last_error text
+    last_error text,
+    CONSTRAINT export_batch_state_timestamps CHECK (
+        (status = 'prepared' OR exported_at IS NOT NULL)
+        AND (status IN ('prepared', 'exported') OR verified_at IS NOT NULL)
+        AND (status NOT IN ('purge_pending', 'purged') OR purge_pending_at IS NOT NULL)
+        AND (status <> 'purged' OR purged_at IS NOT NULL)
+    )
 );
 
 CREATE TABLE archive.export_items (
@@ -225,5 +247,5 @@ CREATE TABLE archive.export_items (
 INSERT INTO collection.sources (platform, account_handle)
 VALUES ('x', 'commuterline');
 
-INSERT INTO collection.schema_migrations (version, name)
-VALUES (1, '0001_collection_processing_archive');
+-- The migration operator records this version and the SHA-256 of this exact file
+-- in the same transaction as this DDL. See docs-database/schema-installation.md.

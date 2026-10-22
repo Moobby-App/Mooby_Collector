@@ -23,9 +23,12 @@ def configure_secrets(values: tuple[str, ...] | list[str]) -> None:
 
 def redact(value: object) -> str:
     text = str(value)
+    # Classify connection strings before replacing registered secrets. Otherwise
+    # a configured DATABASE_URL is consumed by the generic secret replacement
+    # and loses the more useful database-specific marker.
+    text = _DATABASE_URI.sub("[DATABASE_URL_REDACTED]", text)
     for secret in _secrets:
         text = text.replace(secret, "[REDACTED]")
-    text = _DATABASE_URI.sub("[DATABASE_URL_REDACTED]", text)
     text = _AUTH.sub(r"\1[REDACTED]", text)
     text = _BEARER.sub(r"\1[REDACTED]", text)
     text = _COOKIE.sub(r"\1[REDACTED]", text)

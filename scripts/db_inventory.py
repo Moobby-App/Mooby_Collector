@@ -45,6 +45,27 @@ WHERE con.contype = 'f'
 ORDER BY ns.nspname, rel.relname, con.conname
 """
 
+
+CONSTRAINTS_SQL = """
+SELECT ns.nspname, rel.relname, con.conname,
+       CASE con.contype
+         WHEN 'c' THEN 'check'
+         WHEN 'f' THEN 'foreign_key'
+         WHEN 'p' THEN 'primary_key'
+         WHEN 'u' THEN 'unique'
+         WHEN 'x' THEN 'exclusion'
+         ELSE con.contype::text
+       END AS constraint_type,
+       con.convalidated, con.condeferrable, con.condeferred,
+       pg_catalog.pg_get_constraintdef(con.oid, true) AS definition
+FROM pg_catalog.pg_constraint AS con
+JOIN pg_catalog.pg_class AS rel ON rel.oid = con.conrelid
+JOIN pg_catalog.pg_namespace AS ns ON ns.oid = rel.relnamespace
+WHERE ns.nspname <> 'information_schema'
+  AND ns.nspname NOT LIKE 'pg\\_%' ESCAPE '\\'
+ORDER BY ns.nspname, rel.relname, con.conname
+"""
+
 VIEWS_SQL = """
 SELECT n.nspname, c.relname,
        CASE c.relkind WHEN 'm' THEN 'materialized view' ELSE 'view' END AS kind
@@ -158,13 +179,15 @@ def main() -> int:
         return 2
 
     try:
-        # The server starts each transaction read-only; this script issues SELECTs only.
+        # The transaction is explicitly read-only; this script issues SELECTs only.
         with psycopg.connect(
             config.database_url,
             sslmode="require",
             connect_timeout=5,
-            options="-c default_transaction_read_only=on",
         ) as connection:
+            # psycopg encodes this in BEGIN before the transaction starts.
+            # This works even if the pooler ignores PostgreSQL startup options.
+            connection.read_only = True
             with connection.transaction():
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT current_setting('transaction_read_only')")
@@ -176,6 +199,7 @@ def main() -> int:
                     sections = (
                         ("Non-system schemas", ("schema",), fetch_all(cursor, NON_SYSTEM_SCHEMAS_SQL)),
                         ("Tables (approximate row estimates)", ("schema", "table", "approx_rows", "kind"), fetch_all(cursor, TABLES_SQL)),
+                        ("Constraints", ("schema", "table", "constraint", "type", "validated", "deferrable", "initially_deferred", "definition"), fetch_all(cursor, CONSTRAINTS_SQL)),
                         ("Foreign keys", ("schema", "table", "constraint", "definition"), fetch_all(cursor, FOREIGN_KEYS_SQL)),
                         ("Views", ("schema", "view", "kind"), fetch_all(cursor, VIEWS_SQL)),
                         ("Functions", ("schema", "function", "arguments", "result", "language"), fetch_all(cursor, FUNCTIONS_SQL)),
